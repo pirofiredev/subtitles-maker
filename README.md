@@ -1,6 +1,6 @@
 # Film Subtitle & Translation Tools
 
-Automatic transcription, subtitle generation, and translation pipeline using Faster-Whisper and a local LLM endpoint.
+Automatic transcription, subtitle generation, and translation pipeline using whisper model and a local LLM endpoint. **Tested on fedora (could possibly not work on other distros / OS)**
 
 ## Requirements
 
