@@ -1,0 +1,6 @@
+deep-translator
+faster-whisper
+tqdm
+python-dotenv
+nvidia-cublas-cu12
+openai
