@@ -7,7 +7,8 @@ Automatic transcription, subtitle generation, and translation pipeline using whi
 - Python 3.10+
 - FFmpeg
 - NVIDIA GPU with CUDA (16GB VRAM recommended for large-v3)
-- A running **local LLM endpoint** (OpenAI-compatible) for translation
+- A running **local LLM endpoint** (OpenAI-compatible) for translation.
+  - Such as: [9router](https://github.com/decolua/9router), [omniroute](https://github.com/diegosouzapw/OmniRoute), or from any other provider.
 
 ### Python Dependencies
 
