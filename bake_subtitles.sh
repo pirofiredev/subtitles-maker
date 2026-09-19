@@ -6,35 +6,50 @@ if [[ "$input" != *.mp4 ]]; then echo "Error: input must be an .mp4 file."; exit
 
 echo ""
 echo "Subtitle mode:"
-echo "  1) Bake in (hardcoded, always visible)"
-echo "  2) Soft (single embedded track, toggleable)"
-echo "  3) Multi-track (multiple separate subtitle tracks)"
-read -rp "Choose [1/2/3]: " mode
-if [[ "$mode" != "1" && "$mode" != "2" && "$mode" != "3" ]]; then echo "Error: choose 1, 2 or 3."; exit 1; fi
+echo "  1) Bake in one SRT (hardcoded, always visible)"
+echo "  2) Bake in multiple SRTs (stacked on screen, hardcoded)"
+echo "  3) Soft (single embedded track, toggleable)"
+echo "  4) Multi-track (multiple separate subtitle tracks, selectable)"
+read -rp "Choose [1/2/3/4]: " mode
+if [[ "$mode" != "1" && "$mode" != "2" && "$mode" != "3" && "$mode" != "4" ]]; then echo "Error: choose 1, 2, 3 or 4."; exit 1; fi
 
-if [[ "$mode" == "3" ]]; then
+if [[ "$mode" == "4" ]]; then
     tracks=()
     langs=()
     echo "Enter subtitle tracks (leave filename empty to finish):"
     while true; do
-        read -rp "  SRT file: " srt
+        read -rp "  SRT file (or Enter to finish): " srt
         [[ -z "$srt" ]] && break
         if [[ ! -f "$srt" ]]; then echo "  Warning: '$srt' not found, skipping."; continue; fi
         if [[ "$srt" != *.srt ]]; then echo "  Warning: must be .srt, skipping."; continue; fi
-        read -rp "  Language tag for '$srt' (e.g. pol, rus, eng): " lang
+        read -rp "  Language tag for '$srt' (3-letter: pol, rus, eng): " lang
         lang="${lang:-und}"
         tracks+=("$srt")
         langs+=("$lang")
         echo "  Added: $srt [$lang]"
     done
     if [[ ${#tracks[@]} -eq 0 ]]; then echo "Error: no valid subtitle tracks provided."; exit 1; fi
+
+elif [[ "$mode" == "2" ]]; then
+    bake_tracks=()
+    echo "Enter SRT files to bake (leave filename empty to finish, rendered top to bottom):"
+    while true; do
+        read -rp "  SRT file (or Enter to finish): " srt
+        [[ -z "$srt" ]] && break
+        if [[ ! -f "$srt" ]]; then echo "  Warning: '$srt' not found, skipping."; continue; fi
+        if [[ "$srt" != *.srt ]]; then echo "  Warning: must be .srt, skipping."; continue; fi
+        bake_tracks+=("$srt")
+        echo "  Added: $srt"
+    done
+    if [[ ${#bake_tracks[@]} -eq 0 ]]; then echo "Error: no valid subtitle files provided."; exit 1; fi
+
 else
     read -rp "Subtitle file: " subs
     if [[ -z "$subs" ]]; then echo "Error: subtitle file required."; exit 1; fi
     if [[ ! -f "$subs" ]]; then echo "Error: '$subs' not found."; exit 1; fi
     if [[ "$subs" != *.srt ]]; then echo "Error: subtitle must be an .srt file."; exit 1; fi
 
-    if [[ "$mode" == "2" ]]; then
+    if [[ "$mode" == "3" ]]; then
         read -rp "Subtitle language tag (e.g. rus, eng, pol) [leave empty to autodetect]: " sub_lang
         if [[ -z "$sub_lang" ]]; then
             sub_lang=$(ffprobe -v error -select_streams a:0 -show_entries stream_tags=language -of csv=p=0 "$input" 2>/dev/null)
@@ -44,7 +59,7 @@ else
     fi
 fi
 
-output="${input%.*}_subtitled.mp4"
+output="${input%.*}_subtitled.mkv"
 
 # Auto-detect source bitrate
 bitrate=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of csv=p=0 "$input" 2>/dev/null)
@@ -81,9 +96,24 @@ if [[ "$mode" == "1" ]]; then
         "$output" -progress pipe:1 -nostats -loglevel error 2>&1 | progress_filter
 
 elif [[ "$mode" == "2" ]]; then
+    echo "Baking ${#bake_tracks[@]} subtitle tracks (stacked hardcoded)..."
+    # Chain multiple subtitles filters
+    vf=""
+    for srt in "${bake_tracks[@]}"; do
+        if [[ -z "$vf" ]]; then
+            vf="subtitles=$srt"
+        else
+            vf="$vf,subtitles=$srt"
+        fi
+    done
+    ffmpeg -i "$input" -vf "$vf" \
+        -c:v h264_nvenc -preset fast -b:v "${bitrate_k}k" -c:a copy \
+        "$output" -progress pipe:1 -nostats -loglevel error 2>&1 | progress_filter
+
+elif [[ "$mode" == "3" ]]; then
     echo "Embedding subtitles (soft track)..."
     ffmpeg -i "$input" -i "$subs" \
-        -c:v copy -c:a copy -c:s mov_text \
+        -c:v copy -c:a copy -c:s srt \
         -metadata:s:s:0 language="$sub_lang" \
         "$output" -progress pipe:1 -nostats -loglevel error 2>&1 | progress_filter
 
@@ -93,9 +123,14 @@ else
     for srt in "${tracks[@]}"; do
         cmd+=(-i "$srt")
     done
-    cmd+=(-c:v copy -c:a copy -c:s mov_text)
+    cmd+=(-map 0:v -map 0:a)
+    for i in "${!tracks[@]}"; do
+        cmd+=(-map $((i+1)):0)
+    done
+    cmd+=(-c:v copy -c:a copy -c:s srt -disposition:s 0)
     for i in "${!langs[@]}"; do
         cmd+=(-metadata:s:s:$i "language=${langs[$i]}")
+        cmd+=(-metadata:s:s:$i "title=${langs[$i]}")
     done
     cmd+=("$output" -progress pipe:1 -nostats -loglevel error)
     "${cmd[@]}" 2>&1 | progress_filter

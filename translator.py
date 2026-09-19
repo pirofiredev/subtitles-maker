@@ -34,19 +34,18 @@ def write_srt(path, entries):
 
 
 def translate_entries(entries, src, target):
-    chunk_size = 30
-    translated = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    chunk_size = 60
+    chunks = [entries[i:i + chunk_size] for i in range(0, len(entries), chunk_size)]
+    translated = [None] * len(chunks)
 
-    for i in tqdm(range(0, len(entries), chunk_size), desc=f"Translating to {target}"):
-        chunk = entries[i:i + chunk_size]
+    def translate_chunk(idx, chunk):
         numbered = "\n".join(f"{j+1}. {e['text']}" for j, e in enumerate(chunk))
-
         prompt = (
             f"Translate the following subtitle lines from {src} to {target}. "
             f"Return only the translated lines, numbered the same way, no extra text.\n\n"
             f"{numbered}"
         )
-
         try:
             resp = client.chat.completions.create(
                 model=LLM_MODEL,
@@ -54,26 +53,28 @@ def translate_entries(entries, src, target):
                 temperature=0.2,
             )
             raw = resp.choices[0].message.content.strip().splitlines()
-            # Strip leading "1. ", "2. " etc
             result = []
             for line in raw:
                 line = line.strip()
                 if line and line[0].isdigit() and ". " in line:
                     line = line.split(". ", 1)[1]
                 result.append(line)
-
-            # Pad if model returned fewer lines
             while len(result) < len(chunk):
                 result.append(chunk[len(result)]["text"])
-
         except Exception as e:
             print(f"\nTranslation error: {e}, keeping originals for this chunk.")
             result = [e["text"] for e in chunk]
+        return idx, [{"timestamp": e["timestamp"], "text": t.strip()} for e, t in zip(chunk, result)]
 
-        for entry, text in zip(chunk, result):
-            translated.append({"timestamp": entry["timestamp"], "text": text.strip()})
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(translate_chunk, i, chunk): i for i, chunk in enumerate(chunks)}
+        with tqdm(total=len(chunks), desc=f"Translating to {target}") as pbar:
+            for fut in as_completed(futures):
+                idx, result = fut.result()
+                translated[idx] = result
+                pbar.update(1)
 
-    return translated
+    return [entry for chunk in translated for entry in chunk]
 
 
 def main():
@@ -117,21 +118,27 @@ def main():
     print(f"Audio duration: {int(info.duration)}s (Detected language: {detected_lang})")
 
     entries = []
+    raw_segments = list(segments)  # materialize so we can look ahead
     with tqdm(total=info.duration, unit="sec", desc=f"Transcribing ({detected_lang.upper()})") as progress:
         previous_end = 0
-        for number, segment in enumerate(segments, 1):
-            text = segment.text.strip()
-            if not text:
-                progress.update(max(0, segment.end - previous_end))
-                previous_end = segment.end
-                continue
-            end = min(segment.end, segment.start + 10)
+        valid = [(s.start, s.end, s.text.strip()) for s in raw_segments if s.text.strip()]
+        for i, (start, end, text) in enumerate(valid):
+            # Shift start forward slightly — Whisper tends to be early
+            start = start + 0.15
+            # Cap end to 10s max display
+            end = min(end, start + 10)
+            # Don't overlap into next subtitle's start
+            if i + 1 < len(valid):
+                next_start = valid[i + 1][0] + 0.15
+                end = min(end, next_start - 0.05)
             entries.append({
-                "index": number,
-                "timestamp": f"{format_timestamp(segment.start)} --> {format_timestamp(end)}",
+                "index": i + 1,
+                "timestamp": f"{format_timestamp(max(0, start))} --> {format_timestamp(end)}",
                 "text": text,
             })
-            progress.update(max(0, segment.end - previous_end))
+            progress.update(max(0, end - previous_end))
+            previous_end = end
+
             previous_end = segment.end
 
     write_srt("subtitles.srt", entries)
