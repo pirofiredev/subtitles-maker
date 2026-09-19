@@ -2,7 +2,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-_cublas = "/home/pirodev/.local/lib/python3.14/site-packages/nvidia/cublas/lib"
+import sys
+_pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+_cublas = f"/home/{os.environ.get('USER', 'user')}/.local/lib/{_pyver}/site-packages/nvidia/cublas/lib"
 os.environ["LD_LIBRARY_PATH"] = _cublas + ":" + os.environ.get("LD_LIBRARY_PATH", "")
 
 from faster_whisper import WhisperModel
