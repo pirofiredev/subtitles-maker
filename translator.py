@@ -126,7 +126,7 @@ def main():
             # Shift start forward slightly — Whisper tends to be early
             start = start + 0.15
             # Cap end to 10s max display
-            end = min(end, start + 10)
+            end = min(end, start + 5)
             # Don't overlap into next subtitle's start
             if i + 1 < len(valid):
                 next_start = valid[i + 1][0] + 0.15
