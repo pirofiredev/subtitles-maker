@@ -117,29 +117,30 @@ def main():
     detected_lang = info.language if hasattr(info, "language") else src_lang
     print(f"Audio duration: {int(info.duration)}s (Detected language: {detected_lang})")
 
-    entries = []
-    raw_segments = list(segments)  # materialize so we can look ahead
+    # Stream segments live (progress updates as Whisper works)
+    raw = []
     with tqdm(total=info.duration, unit="sec", desc=f"Transcribing ({detected_lang.upper()})") as progress:
         previous_end = 0
-        valid = [(s.start, s.end, s.text.strip()) for s in raw_segments if s.text.strip()]
-        for i, (start, end, text) in enumerate(valid):
-            # Shift start forward slightly — Whisper tends to be early
-            start = start + 0.15
-            # Cap end to 10s max display
-            end = min(end, start + 5)
-            # Don't overlap into next subtitle's start
-            if i + 1 < len(valid):
-                next_start = valid[i + 1][0] + 0.15
-                end = min(end, next_start - 0.05)
-            entries.append({
-                "index": i + 1,
-                "timestamp": f"{format_timestamp(max(0, start))} --> {format_timestamp(end)}",
-                "text": text,
-            })
-            progress.update(max(0, end - previous_end))
-            previous_end = end
-
+        for segment in segments:
+            text = segment.text.strip()
+            progress.update(max(0, segment.end - previous_end))
             previous_end = segment.end
+            if text:
+                raw.append((segment.start, segment.end, text))
+
+    # Post-process: shift start, cap duration, trim gaps
+    entries = []
+    for i, (start, end, text) in enumerate(raw):
+        start = start + 0.15
+        end = min(end, start + 5)
+        if i + 1 < len(raw):
+            next_start = raw[i + 1][0] + 0.15
+            end = min(end, next_start - 0.05)
+        entries.append({
+            "index": i + 1,
+            "timestamp": f"{format_timestamp(max(0, start))} --> {format_timestamp(end)}",
+            "text": text,
+        })
 
     write_srt("subtitles.srt", entries)
     print("\nSaved base subtitles to 'subtitles.srt'.")
